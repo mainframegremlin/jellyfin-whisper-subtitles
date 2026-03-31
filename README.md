@@ -5,9 +5,9 @@ Automatically generates and embeds soft subtitles for media in a Jellyfin librar
 ## Requirements
 
 - Python 3.10+
-- ffmpeg installed system-wide
-- Jellyfin API key (Dashboard → API Keys)
-- Media files accessible on the local filesystem (direct path or network mount)
+- ffmpeg
+- Jellyfin API key
+- Media files accessible on the local filesystem
 
 ## Setup
 
