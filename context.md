@@ -9,7 +9,7 @@ This project was built to automatically generate and attach subtitles to media i
 - **Script machine:** ThinkCentre, MX Linux
 - **Jellyfin server:** Synology NAS, also hosts the media files
 - **Media share:** `/volume1/media` on the NAS, mounted at `/mnt/nas/media` on the mx box
-- **Mount convention:** Same as nas-verify;`/mnt/nas/<sharename>` via SMB/CIFS
+- **Mount convention:** `/mnt/nas/<sharename>` via SMB/CIFS
 - **Credentials file:** `/etc/nas-credentials` (shared with other NAS mounts)
 
 ## Design Decisions
