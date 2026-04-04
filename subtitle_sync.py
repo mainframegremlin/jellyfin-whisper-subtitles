@@ -146,9 +146,20 @@ def _seconds_to_srt_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def transcribe_to_srt(model, video_path, language):
+def beam_size_for_duration(duration_seconds):
+    """Scale beam_size 5→1 as duration grows from 1h to 5h."""
+    hours = duration_seconds / 3600
+    if hours <= 1:
+        return 5
+    if hours >= 5:
+        return 1
+    # Linear: 5 at 1h, 1 at 5h
+    return max(1, round(5 - (hours - 1)))
+
+
+def transcribe_to_srt(model, video_path, language, beam_size=5):
     """Run Whisper on video_path and return an SRT string, or None if empty."""
-    segments, _ = model.transcribe(video_path, language=language, beam_size=5)
+    segments, _ = model.transcribe(video_path, language=language, beam_size=beam_size)
 
     lines = []
     index = 1
@@ -309,10 +320,16 @@ def process(dry_run, limit, force, model_override):
             ok += 1
             continue
 
+        # Compute beam_size from Jellyfin RunTimeTicks (100ns ticks → seconds)
+        ticks = item.get("RunTimeTicks") or 0
+        duration_sec = ticks / 10_000_000
+        bs = beam_size_for_duration(duration_sec)
+        log.info("  Duration %.0fs → beam_size=%d", duration_sec, bs)
+
         # Transcribe
         log.info("  Transcribing %s...", os.path.basename(video_path))
         try:
-            srt_content = transcribe_to_srt(model, video_path, WHISPER_LANGUAGE)
+            srt_content = transcribe_to_srt(model, video_path, WHISPER_LANGUAGE, beam_size=bs)
         except Exception as exc:
             log.error("  Whisper error: %s", exc)
             errors += 1
