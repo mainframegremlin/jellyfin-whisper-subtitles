@@ -1,6 +1,6 @@
 # jellyfin-whisper-subtitles
 
-Automatically generates and embeds soft subtitles for media in a Jellyfin library. For each item without subtitle tracks, the audio is transcribed with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and the result is embedded as a subtitle track via ffmpeg.
+Automatically generates and embeds soft subtitles for media in a Jellyfin library. Audio is transcribed with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and the result is embedded as a subtitle track via ffmpeg.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ cp .env.example .env
 | `MEDIA_ROOT_LOCAL`  | Where that path is mounted locally, e.g. `/mnt/nas/media`                   |
 
 
-If the script runs on the same machine as Jellyfin, leave `MEDIA_ROOT_REMOTE` and `MEDIA_ROOT_LOCAL` empty. The paths will be used as-is.
+If the script runs on the same machine as Jellyfin, leave `MEDIA_ROOT_REMOTE` and `MEDIA_ROOT_LOCAL` empty.
 
 ## Usage
 
@@ -68,7 +68,7 @@ Progress is saved after each item, it is safe to interrupt and resume.
 
 ## Subtitle Embedding
 
-Subtitles are **soft** (selectable, not burned in). The video and audio streams are stream-copied with no re-encoding. Only the subtitle track is added.
+Subtitles are soft (selectable, not burned in). The video and audio streams are stream-copied with no re-encoding.
 
 
 | Container      | Subtitle codec             |
@@ -91,20 +91,3 @@ Subtitles are **soft** (selectable, not burned in). The video and audio streams 
 
 
 A 22-minute episode takes roughly 4 minutes with `base` on CPU.
-
-## Scheduling
-
-To run automatically, add to crontab (`crontab -e`):
-
-```
-0 3 * * * /path/to/.venv/bin/python /path/to/subtitle_sync.py >> /var/log/jellyfin-whisper-subtitles/subtitle_sync.log 2>&1
-```
-
-Create the log directory first:
-
-```bash
-sudo mkdir /var/log/jellyfin-whisper-subtitles
-sudo chown $USER:root /var/log/jellyfin-whisper-subtitles
-```
-
-The script exits quickly when there is nothing new to process, so running nightly is low overhead.
