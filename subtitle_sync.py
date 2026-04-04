@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 import requests
@@ -146,31 +147,65 @@ def _seconds_to_srt_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def beam_size_for_duration(duration_seconds):
-    """Scale beam_size 5→1 as duration grows from 1h to 5h."""
-    hours = duration_seconds / 3600
-    if hours <= 1:
-        return 5
-    if hours >= 5:
-        return 1
-    # Linear: 5 at 1h, 1 at 5h
-    return max(1, round(5 - (hours - 1)))
+CHUNK_SEC = 1800  # 30-minute audio chunks (~110 MB each at 16 kHz mono float32)
+CHUNK_THRESHOLD_SEC = 3600  # files longer than 1 h are chunked
 
 
-def transcribe_to_srt(model, video_path, language, beam_size=5):
-    """Run Whisper on video_path and return an SRT string, or None if empty."""
-    segments, _ = model.transcribe(video_path, language=language, beam_size=beam_size)
-
-    lines = []
-    index = 1
+def _collect_segments(segments, offset, lines, index):
+    """Append SRT entries from a segment iterator, adjusting timestamps by offset."""
     for seg in segments:
         text = seg.text.strip()
         if not text:
             continue
-        start = _seconds_to_srt_timestamp(seg.start)
-        end = _seconds_to_srt_timestamp(seg.end)
+        start = _seconds_to_srt_timestamp(seg.start + offset)
+        end = _seconds_to_srt_timestamp(seg.end + offset)
         lines.append(f"{index}\n{start} --> {end}\n{text}\n")
         index += 1
+    return index
+
+
+def transcribe_to_srt(model, video_path, language, duration_sec=0):
+    """Run Whisper on video_path and return an SRT string, or None if empty.
+
+    For files longer than CHUNK_THRESHOLD_SEC, audio is extracted in 30-minute
+    slices via ffmpeg so the full raw PCM buffer never lives in RAM at once.
+    """
+    lines = []
+    index = 1
+
+    if duration_sec > CHUNK_THRESHOLD_SEC:
+        offset = 0.0
+        chunk_num = 0
+        total_chunks = int(duration_sec // CHUNK_SEC) + 1
+        while offset < duration_sec:
+            chunk_len = min(CHUNK_SEC, duration_sec - offset)
+            chunk_num += 1
+            log.info("  Chunk %d/%d (offset %.0fs, len %.0fs)", chunk_num, total_chunks, offset, chunk_len)
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(tmp_fd)
+            try:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", str(offset),
+                    "-i", video_path,
+                    "-t", str(chunk_len),
+                    "-ar", "16000", "-ac", "1",
+                    "-f", "wav", tmp_path,
+                ]
+                r = subprocess.run(cmd, capture_output=True)
+                if r.returncode != 0:
+                    log.error("  ffmpeg chunk extraction failed at offset %.0f:\n%s", offset, r.stderr[-400:])
+                    offset += CHUNK_SEC
+                    continue
+                segments, _ = model.transcribe(tmp_path, language=language, beam_size=5)
+                index = _collect_segments(segments, offset, lines, index)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            offset += CHUNK_SEC
+    else:
+        segments, _ = model.transcribe(video_path, language=language, beam_size=5)
+        index = _collect_segments(segments, 0.0, lines, index)
 
     if not lines:
         return None
@@ -320,16 +355,14 @@ def process(dry_run, limit, force, model_override):
             ok += 1
             continue
 
-        # Compute beam_size from Jellyfin RunTimeTicks (100ns ticks → seconds)
         ticks = item.get("RunTimeTicks") or 0
         duration_sec = ticks / 10_000_000
-        bs = beam_size_for_duration(duration_sec)
-        log.info("  Duration %.0fs → beam_size=%d", duration_sec, bs)
+        log.info("  Duration %.0fs", duration_sec)
 
         # Transcribe
         log.info("  Transcribing %s...", os.path.basename(video_path))
         try:
-            srt_content = transcribe_to_srt(model, video_path, WHISPER_LANGUAGE, beam_size=bs)
+            srt_content = transcribe_to_srt(model, video_path, WHISPER_LANGUAGE, duration_sec=duration_sec)
         except Exception as exc:
             log.error("  Whisper error: %s", exc)
             errors += 1
